@@ -41,6 +41,11 @@ e() {
   >&2 echo "$1"
 }
 
+where() {
+  local cmd
+  cmd="$(command -v "$1")"
+  echo "$cmd"
+}
 
 if [ $# -eq 0 ]; then
   nginx_type="oss"
@@ -63,25 +68,32 @@ else
   fi
 fi
 
-docker_cmd="$(command -v docker)"
+docker_cmd="$(where docker)"
 if ! [ -x "${docker_cmd}" ]; then
   e "required dependency not found: docker not found in the path or not executable"
   exit ${no_dep_exit_code}
 fi
 
-docker_compose_cmd="$(command -v docker-compose)"
-if ! [ -x "${docker_compose_cmd}" ]; then
-  e "required dependency not found: docker-compose not found in the path or not executable"
-  exit ${no_dep_exit_code}
+docker_compose_cmd="$(where docker-compose)"
+if [ -x "${docker_compose_cmd}" ]; then
+  use_standalone_compose=1
+else
+  if [[ "$(docker compose version)" =~ ^[A-Za-z\ ]+v[0-9.]+$ ]]; then
+    use_standalone_compose=0
+    e "Using built-in compose instead of standalone docker-compose"
+  else
+    e "required dependency not found: docker-compose not found in the path or not executable"
+    exit ${no_dep_exit_code}
+  fi
 fi
 
-curl_cmd="$(command -v curl)"
+curl_cmd="$(where curl)"
 if ! [ -x "${curl_cmd}" ]; then
   e "required dependency not found: curl not found in the path or not executable"
   exit ${no_dep_exit_code}
 fi
 
-wait_for_it_cmd="$(command -v wait-for-it || true)"
+wait_for_it_cmd="$(where wait-for-it || true)"
 if [ -x "${wait_for_it_cmd}" ]; then
   wait_for_it_installed=1
 else
@@ -95,14 +107,26 @@ if [ "${nginx_type}" = "plus" ]; then
     exit ${no_dep_exit_code}
   fi
 
-    if [ ! -f "./plus/etc/ssl/nginx/nginx-repo.key" ]; then
+  if [ ! -f "./plus/etc/ssl/nginx/nginx-repo.key" ]; then
     e "NGINX Plus key file not found: $(pwd)/plus/etc/ssl/nginx/nginx-repo.key"
     exit ${no_dep_exit_code}
   fi
 fi
 
 compose() {
-  "${docker_compose_cmd}"  -f "${test_compose_config}" -p "${test_compose_project}" "$@"
+  if [ ${use_standalone_compose} -eq 1 ]; then
+    # Use `docker-compose`
+    "$docker_compose_cmd" \
+      -f "${test_compose_config}" \
+      -p "${test_compose_project}" \
+      "$@"
+  else
+    # Use `docker compose`
+    "$docker_cmd" "compose" \
+      -f "${test_compose_config}" \
+      -p "${test_compose_project}" \
+    "$@"
+  fi
 }
 
 integration_test() {
